@@ -1,0 +1,62 @@
+## random SPL syntax
+
+// tstats with timechart
+| tstats count where index=dns sourcetype="infoblox:dns" earliest=-3d@d latest=+6h@h by _time span=24h host
+| timechart span=24h sum(count) by host useother=f usenull=f
+
+// host logging time
+
+###### THIS is the same --> just if Diff_InSeconds > 20K secs display Hosts #### NARROW DOWN hosts##################
+| tstats latest(_time) AS unix_lastLog_time where index=proxies sourcetype=* by host index sourcetype
+| eval Diff_InSeconds=now()-unix_lastLog_time
+| convert timeformat="%Y-%m-%d %H:%M:%S" ctime(unix_lastLog_time) as lastLog_time
+| search Diff_InSeconds > 20000
+| fields host, index, sourcetype, lastLog_time, Diff_InSeconds
+| sort -Diff_InSeconds
+
+######## same as above but shows time diff in hours or lastlog
+| tstats latest(_time) AS unix_lastLog_time where index=firewalls_cisco sourcetype=* by host index sourcetype
+| eval Diff_InSeconds=now()-unix_lastLog_time
+| convert timeformat="%Y-%m-%d %H:%M:%S" ctime(unix_lastLog_time) as lastLog_time
+| eval hours_from_lastLog=tostring(Diff_InSeconds, "duration")
+| search hours_from_lastLog > 05
+| fields host, index, sourcetype, lastLog_time, hours_from_lastLog
+| sort -hours_fromlastLog
+
+// for alerting
+## with meta
+| tstats max(_time) as lastLogTime WHERE index=office365 sourcetype="ms:o365:reporting:messagetrace" earliest=-3d@d latest=+1d@d by sourcetype
+| eval alertTime=relative_time(now(), "-24hr")
+| convert timeformat="%Y-%m-%d %H:%M:%S" ctime(lastLogTime) ctime(alertTime)
+
+## without meta
+index=estreamer sourcetype=estreamer earliest=-20m@m latest=now rec_type_simple="IPS EVENT"
+| stats latest(_time) as lastTime by host
+| eval latestTime=strftime(lastTime,"%x %X")
+| eval alertTime=relative_time(now(), "-15m@m")
+| where lastTime < alertTime
+| convert timeformat="%Y-%m-%d %H:%M:%S" ctime(lastTime) ctime(alertTime)
+| stats count by host, lastTime, alertTime
+
+## string match regex
+index=iamsso sourcetype="httpevent" earliest=-2h@h latest=now
+| rex field=_raw "(?<message>(HEC Token is Healthy via Lambda))"
+| stats max(_time) AS lastLogTime by message
+| eval alertTime=relative_time(now(), "-1hr")
+| convert timeformat="%Y-%m-%d %H:%M:%S" ctime(lastLogTime) ctime(alertTime)
+| where lastLogTime < alertTime
+| table message lastLogTime alertTime
+
+// Cisco ASA message ID test matching events
+index=firewalls_cisco sourcetype=cisco:asa Cisco_ASA_message_id="113019" Username="test@test.com" OR Username="test2@test.com"
+| rex field=_raw "(?<session_duration>(Duration:)\s\d+\w.\d+\w.\d+\w)"
+| eval userID=mvindex(user_identity, 0)
+| convert timeformat="%Y-%m-%d %H:%M" ctime(_time)
+| strcat " sessionStart: " _time " " session_duration " sessionEndReason: " reason session | rename IP as pre_asa_ip
+| stats count by _time, Username, uid, session, pre_asa_ip
+| join type=left _time
+    [ search index=firewalls_cisco sourcetype=cisco:asa Username="test@test.com" OR Username="test2@test.com" Cisco_ASA_message_id="746012" OR Cisco_ASA_message_id="746013"
+    | eval userID=mvindex(user_identity, 0)
+    | convert timeformat="%Y-%m-%d %H:%M" ctime(_time)
+    | stats count by _time, src, uid]
+| stats count by _time, Username, userID, session, pre_asa_ip, src | sort -_time

@@ -1,0 +1,32 @@
+// looking for dns return codes
+index=dns sourcetype="infoblox:dns" earliest="12/05/2019:07:00:00" latest="12/05/2019:08:00:00" host IN ( host list)
+| rex field=_raw max_match=0 "(?<dnsCodes>REFUSED|SERVFAIL|FORMERR|NXDOMAIN|NOTIMP|REFUSED|YXDOMAIN|XRRSET|NOTAUTH|NOTZONE)"
+| rex field=_raw max_match=0 "client.(?<client>\d+\.\d+\.\d+.\d+)"
+| fillnull value=NULL host, client, dnsCodes
+| where DnsCodes!="NULL"
+| stats count by host, client, dnsCodes
+
+// looking for KB(patching events) within ASA attributes
+## KB's not being extracted correctly, so using regex
+index=firewalls_cisco sourcetype=cisco:asa (KB4511553 OR
+    KB4512482 OR
+    KB4512486 OR
+    KB4512488 OR
+    KB4512489 OR
+    KB4512497 OR
+    KB4512501 OR
+    KB4512506 OR
+    KB4512507 OR
+    KB4512508 OR
+    KB4512516 OR
+    KB4512517 OR
+    KB4512518) earliest=-30d@d latest=-10m@m
+| rex field=msg "(?<KBnum>(KB\d*))"
+| stats count by Cisco_ASA_user, KBnum
+
+// whats ASA message ID's are configured across the board?
+## any mismatches?
+index=firewalls_cisco sourcetype=cisco:asa earliest=-25h@h latest=-1h@h
+[| inputlookup asaList | table host]
+| stats limit=0 dc(Cisco_ASA_message_id) AS Cisco_ASA_message_id by host
+| sort -Cisco_ASA_message_id
